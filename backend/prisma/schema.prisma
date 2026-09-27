@@ -1,0 +1,245 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// USER — Authentication & ownership
+// ============================================================
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  name         String
+  passwordHash String   @map("password_hash")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  projects         Project[]
+  reviews          Review[]
+  chatSessions     ChatSession[]
+  aiProviderConfigs AIProviderConfig[]
+
+  @@map("users")
+}
+
+// ============================================================
+// PROJECT — Top-level container for uploaded code
+// ============================================================
+model Project {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  language    String?  // Primary language detected or user-specified
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  // Foreign keys
+  userId String @map("user_id")
+
+  // Relations
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  files        ProjectFile[]
+  reviews      Review[]
+  chatSessions ChatSession[]
+
+  @@index([userId])
+  @@map("projects")
+}
+
+// ============================================================
+// PROJECT FILE — Individual source files from ZIP upload
+// ============================================================
+model ProjectFile {
+  id        String   @id @default(uuid())
+  path      String   // Relative path within the project (e.g., "src/index.ts")
+  name      String   // File name (e.g., "index.ts")
+  extension String?  // File extension without dot (e.g., "ts")
+  size      Int      // File size in bytes
+  content   String   // File content (text-based files only)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // Foreign keys
+  projectId String @map("project_id")
+
+  // Relations
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, path]) // No duplicate paths within a project
+  @@index([projectId])
+  @@map("project_files")
+}
+
+// ============================================================
+// REVIEW — A code review session
+// ============================================================
+model Review {
+  id        String       @id @default(uuid())
+  mode      ReviewMode   // security | performance | quality
+  status    ReviewStatus @default(PENDING)
+  scope     ReviewScope  // single_file | multi_file | project
+  summary   String?      // AI-generated summary of the review
+  metadata  Json?        // Additional metadata (files reviewed, tokens used, etc.)
+  createdAt DateTime     @default(now()) @map("created_at")
+  updatedAt DateTime     @updatedAt @map("updated_at")
+
+  // Foreign keys
+  projectId String @map("project_id")
+  userId    String @map("user_id")
+
+  // Context: which files were reviewed
+  filePaths Json? @map("file_paths") // Array of file paths that were reviewed
+
+  // Relations
+  project Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  issues  ReviewIssue[]
+
+  @@index([projectId])
+  @@index([userId])
+  @@index([createdAt])
+  @@map("reviews")
+}
+
+// ============================================================
+// REVIEW ISSUE — Individual issues found in a review
+// ============================================================
+model ReviewIssue {
+  id          String        @id @default(uuid())
+  severity    IssueSeverity // critical | high | medium | low | info
+  category    String        // e.g., "security", "performance", "style", "bug"
+  title       String
+  description String
+  filePath    String?       @map("file_path")
+  lineStart   Int?          @map("line_start")
+  lineEnd     Int?          @map("line_end")
+  suggestion  String?       // AI-suggested fix
+  codeSnippet String?       @map("code_snippet") // Relevant code
+
+  // Foreign keys
+  reviewId String @map("review_id")
+
+  // Relations
+  review Review @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+
+  @@index([reviewId])
+  @@index([severity])
+  @@map("review_issues")
+}
+
+// ============================================================
+// AI PROVIDER CONFIG — User's configured AI providers
+// ============================================================
+model AIProviderConfig {
+  id           String       @id @default(uuid())
+  providerType ProviderType @map("provider_type")
+  name         String       // User-friendly name
+  apiKey       String?      @map("api_key") // Encrypted at rest
+  baseUrl      String?      @map("base_url") // For LM Studio / compatible APIs
+  model        String       // Model name (e.g., "gpt-4o", "codellama")
+  isDefault    Boolean      @default(false) @map("is_default")
+  createdAt    DateTime     @default(now()) @map("created_at")
+  updatedAt    DateTime     @updatedAt @map("updated_at")
+
+  // Foreign keys
+  userId String @map("user_id")
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("ai_provider_configs")
+}
+
+// ============================================================
+// CHAT SESSION — Conversation thread about a project's code
+// ============================================================
+model ChatSession {
+  id        String   @id @default(uuid())
+  title     String
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Foreign keys
+  projectId String @map("project_id")
+  userId    String @map("user_id")
+
+  // Relations
+  project  Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user     User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages ChatMessage[]
+
+  @@index([projectId])
+  @@index([userId])
+  @@map("chat_sessions")
+}
+
+// ============================================================
+// CHAT MESSAGE — Individual message in a chat session
+// ============================================================
+model ChatMessage {
+  id        String      @id @default(uuid())
+  role      MessageRole // user | assistant | system
+  content   String
+  createdAt DateTime    @default(now()) @map("created_at")
+
+  // Foreign keys
+  sessionId String @map("session_id")
+
+  // Relations
+  session ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@map("chat_messages")
+}
+
+// ============================================================
+// ENUMS
+// ============================================================
+enum ReviewMode {
+  SECURITY
+  PERFORMANCE
+  QUALITY
+}
+
+enum ReviewStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  FAILED
+}
+
+enum ReviewScope {
+  SINGLE_FILE
+  MULTI_FILE
+  PROJECT
+}
+
+enum IssueSeverity {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+  INFO
+}
+
+enum ProviderType {
+  OPENAI
+  LM_STUDIO
+  COMPATIBLE
+  OLLAMA
+  OPEN_ROUTER
+}
+
+enum MessageRole {
+  USER
+  ASSISTANT
+  SYSTEM
+}
